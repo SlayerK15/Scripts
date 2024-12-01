@@ -24,7 +24,7 @@ A comprehensive collection of installation scripts for common DevOps tools on Ub
    ```bash
    #Clone the repository
    git clone https://github.com/SlayerK15/Scripts.git
-   cd devops-tools
+   cd Scripts
    
    ```
 
