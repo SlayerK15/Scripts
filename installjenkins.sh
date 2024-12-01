@@ -15,6 +15,13 @@ validate_root
 if systemctl is-active --quiet jenkins; then
     jenkins_version=$(java -jar /usr/share/jenkins/jenkins.war --version 2>/dev/null)
     log_info "Jenkins is already installed and running (version: $jenkins_version)"
+    
+    # Ensure Jenkins is in docker group if Docker is installed
+    if command -v docker &> /dev/null && ! groups jenkins | grep -q docker; then
+        usermod -aG docker jenkins
+        systemctl restart jenkins
+        log_info "Added Jenkins to docker group and restarted service"
+    fi
     exit 0
 fi
 
@@ -41,6 +48,12 @@ echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] \
 
 apt-get update
 apt-get install -y jenkins
+
+# Add Jenkins to docker group if Docker is installed
+if command -v docker &> /dev/null; then
+    log_info "Adding Jenkins user to docker group"
+    usermod -aG docker jenkins
+fi
 
 # Start Jenkins
 systemctl enable jenkins

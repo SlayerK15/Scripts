@@ -15,6 +15,13 @@ validate_root
 if command -v docker &> /dev/null && docker info &> /dev/null; then
     docker_version=$(docker --version | cut -d' ' -f3 | tr -d ',')
     log_info "Docker is already installed and running (version: $docker_version)"
+    
+    # Ensure user is in docker group even if Docker is installed
+    if ! groups "${SUDO_USER:-$USER}" | grep -q docker; then
+        usermod -aG docker "${SUDO_USER:-$USER}"
+        log_info "Added ${SUDO_USER:-$USER} to docker group"
+        newgrp docker < <(echo "")
+    fi
     exit 0
 fi
 
@@ -43,14 +50,24 @@ $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.
 apt-get update
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-# Configure Docker
+# Configure Docker groups
+log_info "Configuring user groups for Docker"
+
+# Add current user to docker group
 usermod -aG docker "${SUDO_USER:-$USER}"
+log_info "Added ${SUDO_USER:-$USER} to docker group"
+
+# Apply group changes in current session
+newgrp docker < <(echo "")
+log_info "Applied docker group changes"
+
+# Enable and start Docker service
 systemctl enable docker
 systemctl start docker
 
 # Verify installation
 if docker run hello-world; then
-    log_info "Docker installation completed successfully"
+    log_info "Docker installation and group configuration completed successfully"
     exit 0
 else
     log_error "Docker installation verification failed"

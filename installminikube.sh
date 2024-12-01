@@ -15,12 +15,17 @@ validate_root
 if command -v minikube &> /dev/null; then
     minikube_version=$(minikube version --short 2>/dev/null)
     log_info "Minikube is already installed (version: $minikube_version)"
+    if minikube status &> /dev/null; then
+        log_info "Minikube cluster is running"
+    else
+        log_info "Minikube cluster is not running"
+    fi
     exit 0
 fi
 
 log_info "Starting Minikube installation"
 
-# Check for Docker
+# Check for Docker and proper group configuration
 if ! command -v docker &> /dev/null; then
     if [[ -f "${SCRIPT_DIR}/installdocker.sh" ]]; then
         log_info "Docker not found, installing Docker first"
@@ -29,6 +34,15 @@ if ! command -v docker &> /dev/null; then
         log_error "Docker is required but not installed and installdocker.sh not found"
         exit 1
     fi
+fi
+
+# Verify Docker group configuration
+ORIGINAL_USER="${SUDO_USER:-$USER}"
+if ! groups "${ORIGINAL_USER}" | grep -q docker; then
+    log_info "Adding ${ORIGINAL_USER} to docker group"
+    usermod -aG docker "${ORIGINAL_USER}"
+    # Force group update
+    newgrp docker < <(echo "")
 fi
 
 # Download and install Minikube
@@ -42,9 +56,11 @@ if ! command -v minikube &> /dev/null; then
     exit 1
 fi
 
-# Start Minikube as the original user
-ORIGINAL_USER="${SUDO_USER:-$USER}"
-su - "${ORIGINAL_USER}" -c "minikube start"
+# Start Minikube as the original user with proper group context
+log_info "Starting Minikube..."
+su - "${ORIGINAL_USER}" -c "newgrp docker << EOF
+minikube start
+EOF"
 
 if minikube status; then
     log_info "Minikube installation and startup completed successfully"
