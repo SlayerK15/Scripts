@@ -22,14 +22,10 @@ A comprehensive collection of installation scripts for common DevOps tools on Ub
 1. Get the scripts:
 
    ```bash
-   # Option 1: Clone the repository
-   git clone https://github.com/yourusername/devops-tools.git
+   #Clone the repository
+   git clone https://github.com/SlayerK15/Scripts.git
    cd devops-tools
-
-   # Option 2: Download directly
-   wget https://github.com/yourusername/devops-tools/archive/main.zip
-   unzip main.zip
-   cd devops-tools-main
+   
    ```
 
 2. Make scripts executable:
