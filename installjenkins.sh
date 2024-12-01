@@ -1,47 +1,60 @@
 #!/bin/bash
 
-# Function to check if Java is installed
-function check_java() {
-    if java -version 2>&1 >/dev/null; then
-        echo "Java is already installed:"
-        java -version
-        return 0
-    else
-        echo "Java is not installed"
-        return 1
-    fi
-}
-
-# Main installation script
-echo "Checking Java installation..."
-if ! check_java; then
-    echo "Installing OpenJDK 17..."
-    sudo apt update
-    sudo apt install -y fontconfig openjdk-17-jre
-    
-    # Verify Java installation
-    if ! check_java; then
-        echo "Java installation failed. Exiting..."
-        exit 1
-    fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/common.sh" ]]; then
+    source "${SCRIPT_DIR}/common.sh"
+else
+    log_info() { echo "[INFO] $(date '+%Y-%m-%d %H:%M:%S') - $1"; }
+    log_error() { echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') - $1"; }
+    validate_root() { [[ $EUID -ne 0 ]] && echo "This script must be run as root" && exit 1; }
 fi
 
-# Proceed with Jenkins installation
-echo "Installing Jenkins..."
-sudo wget -O /usr/share/keyrings/jenkins-keyring.asc \
-  https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+validate_root
+
+# Check if Jenkins is already installed and running
+if systemctl is-active --quiet jenkins; then
+    jenkins_version=$(java -jar /usr/share/jenkins/jenkins.war --version 2>/dev/null)
+    log_info "Jenkins is already installed and running (version: $jenkins_version)"
+    exit 0
+fi
+
+log_info "Starting Jenkins installation"
+
+# Install Java
+log_info "Installing OpenJDK 17"
+apt-get update
+apt-get install -y fontconfig openjdk-17-jre
+
+# Verify Java installation
+if ! java -version 2>&1 >/dev/null; then
+    log_error "Java installation failed"
+    exit 1
+fi
+
+# Install Jenkins
+wget -q -O /usr/share/keyrings/jenkins-keyring.asc \
+    https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
 
 echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] \
-  https://pkg.jenkins.io/debian-stable binary/" | sudo tee \
-  /etc/apt/sources.list.d/jenkins.list > /dev/null
+    https://pkg.jenkins.io/debian-stable binary/" | tee \
+    /etc/apt/sources.list.d/jenkins.list > /dev/null
 
-sudo apt-get update
-sudo apt-get install -y jenkins
+apt-get update
+apt-get install -y jenkins
 
-# Verify Jenkins service status
-echo "Checking Jenkins service status..."
-sudo systemctl status jenkins | grep Active
+# Start Jenkins
+systemctl enable jenkins
+systemctl start jenkins
 
-echo "Jenkins installation completed"
-echo "Initial admin password:"
-sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+# Wait for Jenkins to start and get initial password
+log_info "Waiting for Jenkins to start (30 seconds)..."
+sleep 30
+
+if [[ -f /var/lib/jenkins/secrets/initialAdminPassword ]]; then
+    log_info "Jenkins initial admin password: $(cat /var/lib/jenkins/secrets/initialAdminPassword)"
+    log_info "Jenkins installation completed successfully"
+    exit 0
+else
+    log_error "Could not retrieve Jenkins initial admin password"
+    exit 1
+fi

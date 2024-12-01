@@ -1,164 +1,278 @@
 #!/bin/bash
+# setup.sh - Complete installation management script
 
-# Exit on any error
-set -e
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Variables
-REPO_URL="https://github.com/SlayerK15/Scripts.git"
-SCRIPTS_DIR="devops_tools"
-LOG_FILE="installation_log.txt"
-ERROR_LOG="error_log.txt"
+# Logging setup
+LOG_DIR="/var/log/devops-install"
+INSTALL_LOG="${LOG_DIR}/installation.log"
+ERROR_LOG="${LOG_DIR}/error.log"
 
-# Color codes for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-# Initialize logs
-> "${ERROR_LOG}"
-echo "Installation started at: $(date)" > "${LOG_FILE}"
-
-# Function to log messages
-log_message() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "${LOG_FILE}"
+# Logging functions
+log_info() {
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[INFO] ${timestamp} - $1"
+    if [[ -w "${INSTALL_LOG}" ]]; then
+        echo "[INFO] ${timestamp} - $1" >> "${INSTALL_LOG}"
+    fi
 }
 
-# Function to log errors
 log_error() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" | tee -a "${ERROR_LOG}"
-}
-
-# Function to check if a command exists
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
-
-# Function to install git if not present
-ensure_git() {
-    if ! command_exists git; then
-        log_message "Installing git..."
-        sudo apt-get update && sudo apt-get install -y git
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[ERROR] ${timestamp} - $1"
+    if [[ -w "${ERROR_LOG}" ]]; then
+        echo "[ERROR] ${timestamp} - $1" >> "${ERROR_LOG}"
     fi
 }
 
-# Function to clone repository
-clone_repository() {
-    log_message "Cloning scripts repository..."
-    if [ -d "${SCRIPTS_DIR}" ]; then
-        log_message "Directory exists, removing old files..."
-        rm -rf "${SCRIPTS_DIR}"
-    fi
-    git clone "${REPO_URL}" "${SCRIPTS_DIR}"
-}
+# Available tools configuration
+declare -A TOOLS=(
+    ["docker"]="installdocker.sh"
+    ["jenkins"]="installjenkins.sh"
+    ["kubernetes"]="installk8s.sh"
+    ["minikube"]="installminikube.sh"
+    ["terraform"]="installterraform.sh"
+)
 
-# Function to check and fix scripts
-check_and_fix_scripts() {
-    cd "${SCRIPTS_DIR}"
-    
-    # Fix line endings
-    find . -type f -name "*.sh" -exec dos2unix {} \;
-    
-    # Fix shebang lines
-    find . -type f -name "*.sh" -exec sed -i '1s|^#!.*|#!/bin/bash|' {} \;
-    
-    # Make scripts executable
-    chmod +x *.sh
-    
-    # Fix specific scripts
-    
-    # Fix Jenkins script
-    sed -i 's|cat /var/lib/jenkins/secrets/initialAdminPassword|sleep 10 \&\& sudo cat /var/lib/jenkins/secrets/initialAdminPassword|' installjenkins.sh
-
-    # Fix Docker script to handle existing installations
-    sed -i '/apt-get remove/i if dpkg -l | grep -q "^ii.*docker"; then' installdocker.sh
-    sed -i '/apt-get remove/a fi' installdocker.sh
-    
-    # Add error handling to Minikube script
-    sed -i '/minikube start/i if ! command -v docker >/dev/null 2>\&1; then\n    echo "Docker is required but not installed. Installing Docker first..."\n    sudo ./installdocker.sh\nfi' installminikube.sh
-    
-    # Add verification to Terraform script
-    sed -i '/terraform install/a if ! command -v terraform >/dev/null 2>\&1; then\n    echo "Terraform installation failed"\n    exit 1\nfi' installterraform.sh
-    
-    # Enhance main installation script
-    cat > installtools.sh << 'EOF'
-#!/bin/bash
-
-# Exit on error
-set -e
-
-# Variables
-LOG_FILE="installation_log.txt"
-ERROR_LOG="error_log.txt"
-FAILED_INSTALLATIONS=()
-
-# Initialize logs
-> "${ERROR_LOG}"
-echo "Installation started at: $(date)" > "${LOG_FILE}"
-
-# Function to handle installation
-install_tool() {
-    local tool=$1
-    local script=$2
-    
-    echo "================================================================"
-    echo "Installing ${tool}..."
-    echo "================================================================"
-    
-    if sudo "./${script}" >> "${LOG_FILE}" 2>&1; then
-        echo "✅ ${tool} installation completed successfully"
-    else
-        echo "❌ ${tool} installation failed"
-        FAILED_INSTALLATIONS+=("${tool}")
-        echo "${tool} installation failed. Check ${LOG_FILE} for details" >> "${ERROR_LOG}"
+# Function to validate root privileges
+validate_root() {
+    if [[ $EUID -ne 0 ]]; then
+        echo "This script must be run as root"
+        exit 1
     fi
 }
 
-# Install tools
-install_tool "Docker" "installdocker.sh"
-install_tool "Jenkins" "installjenkins.sh"
-install_tool "Kubernetes" "installk8s.sh"
-install_tool "Minikube" "installminikube.sh"
-install_tool "Terraform" "installterraform.sh"
+# Function to display usage information
+show_usage() {
+    cat << EOF
+Usage: $0 [OPTIONS] [TOOLS...]
 
-# Report results
-echo "================================================================"
-echo "Installation Complete!"
-echo "================================================================"
+Options:
+    -h, --help          Show this help message
+    -l, --list          List available tools
+    -a, --all           Install all tools
+    -f, --force         Force installation even if tool is already installed
+    -s, --status        Check installation status of all tools
+    -c, --clean         Clean up existing installations before installing
 
-if [ ${#FAILED_INSTALLATIONS[@]} -eq 0 ]; then
-    echo "✅ All installations completed successfully!"
-else
-    echo "❌ The following installations failed:"
-    printf '%s\n' "${FAILED_INSTALLATIONS[@]}"
-    echo "Please check ${ERROR_LOG} for details"
-    exit 1
-fi
+Available tools:
+    docker              Install Docker
+    jenkins             Install Jenkins
+    kubernetes          Install Kubernetes CLI
+    minikube           Install Minikube
+    terraform          Install Terraform
+
+Examples:
+    $0 --status                    # Check status of all tools
+    $0 --list                      # List available tools
+    $0 docker jenkins              # Install specific tools
+    $0 --all                       # Install all tools
+    $0 --force docker             # Force Docker installation
+    $0 --clean --all              # Clean and reinstall all tools
 EOF
 }
 
+# Function to list available tools
+list_tools() {
+    log_info "Available tools for installation:"
+    for tool in "${!TOOLS[@]}"; do
+        echo "    - $tool"
+    done
+}
+
+# Function to check installation status of a tool
+check_tool_status() {
+    local tool=$1
+    case $tool in
+        docker)
+            if command -v docker &> /dev/null && docker info &> /dev/null; then
+                echo "Docker: Installed ($(docker --version))"
+                return 0
+            fi
+            ;;
+        jenkins)
+            if systemctl is-active --quiet jenkins; then
+                echo "Jenkins: Installed and running"
+                return 0
+            fi
+            ;;
+        kubernetes)
+            if command -v kubectl &> /dev/null; then
+                echo "Kubernetes CLI: Installed ($(kubectl version --client --short))"
+                return 0
+            fi
+            ;;
+        minikube)
+            if command -v minikube &> /dev/null; then
+                echo "Minikube: Installed ($(minikube version --short))"
+                return 0
+            fi
+            ;;
+        terraform)
+            if command -v terraform &> /dev/null; then
+                echo "Terraform: Installed ($(terraform version -json | grep -o '"version": *"[^"]*"' | cut -d'"' -f4))"
+                return 0
+            fi
+            ;;
+    esac
+    echo "$tool: Not installed"
+    return 1
+}
+
+# Function to install a specific tool
+install_tool() {
+    local tool=$1
+    local script="${TOOLS[$tool]}"
+    local force=$2
+
+    if [[ ! -f "${SCRIPT_DIR}/${script}" ]]; then
+        log_error "Installation script for $tool not found"
+        return 1
+    fi
+
+    # Check if tool is already installed and force flag is not set
+    if ! $force && check_tool_status "$tool" > /dev/null; then
+        log_info "Skipping $tool installation (already installed)"
+        return 0
+    fi
+
+    log_info "Installing $tool..."
+    if bash "${SCRIPT_DIR}/${script}"; then
+        log_info "$tool installation completed successfully"
+        return 0
+    else
+        log_error "$tool installation failed"
+        return 1
+    fi
+}
+
+# Function to clean existing installations
+clean_installation() {
+    local tool=$1
+    log_info "Cleaning existing installation of $tool..."
+    
+    case $tool in
+        docker)
+            systemctl stop docker || true
+            apt-get remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            rm -rf /var/lib/docker
+            ;;
+        jenkins)
+            systemctl stop jenkins || true
+            apt-get remove -y jenkins
+            rm -rf /var/lib/jenkins
+            ;;
+        kubernetes)
+            apt-get remove -y kubectl
+            ;;
+        minikube)
+            minikube delete || true
+            rm -f /usr/local/bin/minikube
+            ;;
+        terraform)
+            apt-get remove -y terraform
+            ;;
+    esac
+}
+
 # Main execution
-echo "Starting installation setup..."
+validate_root
 
-# Ensure git is installed
-ensure_git
+# Initialize logs
+mkdir -p "${LOG_DIR}"
+touch "${INSTALL_LOG}" "${ERROR_LOG}"
+chmod 644 "${INSTALL_LOG}" "${ERROR_LOG}"
 
-# Clone repository
-clone_repository
+# Process command line arguments
+TOOLS_TO_INSTALL=()
+INSTALL_ALL=false
+FORCE_INSTALL=false
+CHECK_STATUS=false
+CLEAN_INSTALL=false
 
-# Check and fix scripts
-check_and_fix_scripts
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            show_usage
+            exit 0
+            ;;
+        -l|--list)
+            list_tools
+            exit 0
+            ;;
+        -a|--all)
+            INSTALL_ALL=true
+            shift
+            ;;
+        -f|--force)
+            FORCE_INSTALL=true
+            shift
+            ;;
+        -s|--status)
+            CHECK_STATUS=true
+            shift
+            ;;
+        -c|--clean)
+            CLEAN_INSTALL=true
+            shift
+            ;;
+        *)
+            if [[ -n "${TOOLS[$1]}" ]]; then
+                TOOLS_TO_INSTALL+=("$1")
+            else
+                log_error "Unknown tool: $1"
+                echo "Use --list to see available tools"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
 
-echo "
-Scripts have been prepared successfully!
+# Check status if requested
+if [[ "$CHECK_STATUS" == true ]]; then
+    echo "Checking installation status of all tools..."
+    for tool in "${!TOOLS[@]}"; do
+        check_tool_status "$tool"
+    done
+    exit 0
+fi
 
-To start the installation:
-cd ${SCRIPTS_DIR}
-sudo ./installtools.sh
+# Prepare list of tools to install
+if [[ "$INSTALL_ALL" == true ]]; then
+    TOOLS_TO_INSTALL=("${!TOOLS[@]}")
+fi
 
-The installation will create two log files:
-- ${LOG_FILE}: Detailed installation logs
-- ${ERROR_LOG}: Error messages and failures
+# Validate that tools were specified
+if [[ ${#TOOLS_TO_INSTALL[@]} -eq 0 ]]; then
+    log_error "No tools specified for installation"
+    echo "Use --help to see usage information"
+    exit 1
+fi
 
-After installation, check these logs for any issues that occurred during the process.
-"
+# Track failed installations
+FAILED_INSTALLATIONS=()
+
+# Process installations
+for tool in "${TOOLS_TO_INSTALL[@]}"; do
+    # Clean if requested
+    if [[ "$CLEAN_INSTALL" == true ]]; then
+        clean_installation "$tool"
+    fi
+    
+    # Install tool
+    if ! install_tool "$tool" "$FORCE_INSTALL"; then
+        FAILED_INSTALLATIONS+=("$tool")
+    fi
+done
+
+# Report results
+if [[ ${#FAILED_INSTALLATIONS[@]} -eq 0 ]]; then
+    log_info "All requested installations completed successfully"
+    exit 0
+else
+    log_error "The following installations failed:"
+    printf '%s\n' "${FAILED_INSTALLATIONS[@]}"
+    exit 1
+fi

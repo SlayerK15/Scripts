@@ -1,46 +1,48 @@
 #!/bin/bash
 
-# Exit on any error
-set -e
-
-echo "Starting Terraform installation..."
-
-# Check if wget is installed
-if ! command -v wget &> /dev/null; then
-    echo "wget not found. Installing wget..."
-    sudo apt-get update && sudo apt-get install -y wget
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/common.sh" ]]; then
+    source "${SCRIPT_DIR}/common.sh"
+else
+    log_info() { echo "[INFO] $(date '+%Y-%m-%d %H:%M:%S') - $1"; }
+    log_error() { echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') - $1"; }
+    validate_root() { [[ $EUID -ne 0 ]] && echo "This script must be run as root" && exit 1; }
 fi
 
-# Download and add HashiCorp GPG key
-echo "Adding HashiCorp GPG key..."
-if ! wget -O - https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg; then
-    echo "Failed to add GPG key"
-    exit 1
+validate_root
+
+# Check if Terraform is already installed
+if command -v terraform &> /dev/null; then
+    terraform_version=$(terraform version -json | grep -o '"version": *"[^"]*"' | cut -d'"' -f4)
+    log_info "Terraform is already installed (version: $terraform_version)"
+    exit 0
 fi
+
+log_info "Starting Terraform installation"
+
+# Install wget
+apt-get update
+apt-get install -y wget
+
+# Add HashiCorp GPG key
+wget -O - https://apt.releases.hashicorp.com/gpg | \
+    gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
 
 # Add HashiCorp repository
-echo "Adding HashiCorp repository..."
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+echo "deb [arch=$(dpkg --print-architecture) \
+    signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
+    https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
+    tee /etc/apt/sources.list.d/hashicorp.list
 
-# Update package list and install Terraform
-echo "Updating package list and installing Terraform..."
-if ! sudo apt-get update; then
-    echo "Failed to update package list"
-    exit 1
-fi
-
-if ! sudo apt-get install -y terraform; then
-    echo "Failed to install Terraform"
-    exit 1
-fi
+# Install Terraform
+apt-get update
+apt-get install -y terraform
 
 # Verify installation
-if ! command -v terraform &> /dev/null; then
-    echo "Terraform installation verification failed"
+if terraform version; then
+    log_info "Terraform installation completed successfully"
+    exit 0
+else
+    log_error "Terraform installation failed"
     exit 1
 fi
-
-# Display success message and version
-echo "Terraform installation successful!"
-terraform --version
-echo "You can now use Terraform. Try 'terraform --help' to get started."

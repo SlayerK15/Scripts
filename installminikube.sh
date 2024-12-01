@@ -1,66 +1,55 @@
 #!/bin/bash
 
-# Exit on any error
-set -e
-
-echo "Starting Minikube installation..."
-
-# Check if script is run with sudo
-if [ "$EUID" -ne 0 ]; then 
-    echo "Please run this script with sudo"
-    exit 1
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/common.sh" ]]; then
+    source "${SCRIPT_DIR}/common.sh"
+else
+    log_info() { echo "[INFO] $(date '+%Y-%m-%d %H:%M:%S') - $1"; }
+    log_error() { echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') - $1"; }
+    validate_root() { [[ $EUID -ne 0 ]] && echo "This script must be run as root" && exit 1; }
 fi
 
-# Function to check if a command exists
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
+validate_root
 
-# Verify Docker installation
-if ! command_exists docker; then
-    if [ -f "./installdocker.sh" ]; then
-        echo "Docker not found. Installing Docker using installdocker.sh..."
-        bash ./installdocker.sh
+# Check if Minikube is already installed
+if command -v minikube &> /dev/null; then
+    minikube_version=$(minikube version --short 2>/dev/null)
+    log_info "Minikube is already installed (version: $minikube_version)"
+    exit 0
+fi
+
+log_info "Starting Minikube installation"
+
+# Check for Docker
+if ! command -v docker &> /dev/null; then
+    if [[ -f "${SCRIPT_DIR}/installdocker.sh" ]]; then
+        log_info "Docker not found, installing Docker first"
+        bash "${SCRIPT_DIR}/installdocker.sh"
     else
-        echo "Error: Docker is not installed and installdocker.sh not found"
+        log_error "Docker is required but not installed and installdocker.sh not found"
         exit 1
     fi
 fi
 
-# Verify Docker service is running
-if ! systemctl is-active --quiet docker; then
-    echo "Starting Docker service..."
-    systemctl start docker
-fi
-
-# Download Minikube
-echo "Downloading latest Minikube..."
-if ! curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64; then
-    echo "Error: Failed to download Minikube"
-    exit 1
-fi
-
-# Install Minikube
-echo "Installing Minikube..."
-if ! install minikube-linux-amd64 /usr/local/bin/minikube; then
-    echo "Error: Failed to install Minikube"
-    rm minikube-linux-amd64
-    exit 1
-fi
-
-# Clean up downloaded file
+# Download and install Minikube
+curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+install minikube-linux-amd64 /usr/local/bin/minikube
 rm minikube-linux-amd64
 
 # Verify Minikube installation
-if ! command_exists minikube; then
-    echo "Error: Minikube installation failed"
+if ! command -v minikube &> /dev/null; then
+    log_error "Minikube installation failed"
     exit 1
 fi
 
-echo "Starting Minikube..."
-# Start Minikube as the original user, not as root
-ORIGINAL_USER=$(logname)
-su - $ORIGINAL_USER -c "minikube start"
+# Start Minikube as the original user
+ORIGINAL_USER="${SUDO_USER:-$USER}"
+su - "${ORIGINAL_USER}" -c "minikube start"
 
-echo "Minikube installation and startup complete!"
-echo "You can now use 'minikube status' to verify the cluster status"
+if minikube status; then
+    log_info "Minikube installation and startup completed successfully"
+    exit 0
+else
+    log_error "Minikube startup failed"
+    exit 1
+fi
