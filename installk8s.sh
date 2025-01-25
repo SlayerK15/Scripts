@@ -35,7 +35,7 @@ echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] \
 
 # Install kubectl
 apt-get update
-apt-get install -y kubectl
+apt-get install -y kubectl kubeadm kubelet
 
 # Verify installation
 if kubectl version --client; then
